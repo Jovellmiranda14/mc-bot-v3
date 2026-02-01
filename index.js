@@ -47,7 +47,10 @@ function createBotInstance(botConfig, index) {
     username: botConfig.username,
     password: botConfig.password,
     auth: botConfig.type,
-    version: process.env.SERVER_VERSION || false
+    version: process.env.SERVER_VERSION || false,
+    connectTimeout: 60000, // Wait 60s for Aternos to respond
+    keepAlive: true,       // Prevents random "socket closed"
+    hideErrors: false      // Shows us exactly why it fails
   });
 
   bot.once('spawn', () => {
