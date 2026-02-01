@@ -1,0 +1,16 @@
+[
+  {
+    "host": "JovellMiranda.aternos.me",
+    "port": 19038,
+    "username": "Shadow",
+    "password": "",
+    "type": "offline"
+  },
+  {
+    "host": "JovellMiranda.aternos.me",
+    "port": 19038,
+    "username": "Bot",
+    "password": "",
+    "type": "offline"
+  }
+]
