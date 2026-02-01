@@ -1,385 +1,285 @@
 require('dotenv').config();
 const mineflayer = require('mineflayer');
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const { logger } = require('./logging.js');
 
 const app = express();
-const activeBots = [];
+const BOTS_FILE = path.join(__dirname, 'bots.json');
+
+let activeBots = [];
+let logs = [];
 
 app.use(express.json());
 
-// Bots Status Route
-app.get('/bots', (req, res) => {
-  const botsStatus = activeBots.map(bot => {
-    const username = bot.instance?.username || bot.config.username || 'Unknown';
-    return {
-      username,
-      status: bot.instance ? 'online' : 'offline',
-      index: bot.index
-    };
-  });
-  res.json(botsStatus);
-});
+function addLog(msg) {
+  const entry = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logs.push(entry);
+  if (logs.length > 25) logs.shift();
+  console.log(entry);
+}
 
-// Control Route
-app.post('/control', (req, res) => {
-  const { command, index } = req.body;
-  const bot = activeBots.find(b => b.index === index);
-
-  if (!bot) {
-    logger.error(`[Server] Command '${command}' failed. Bot-${index} not found.`);
-    return res.status(404).json({ error: 'Bot not found' });
-  }
-
-  if (command === 'start' && !bot.instance) {
-    logger.info(`[Server] Received 'start' command for Bot-${index}.`);
-    startBot(bot.config, index);
-    return res.status(200).json({ message: `Bot-${index} started.` });
-  }
-
-  if (command === 'stop' && bot.instance) {
-    logger.info(`[Server] Received 'stop' command for Bot-${index}.`);
-    activeBots[index].manuallyStopped = true;
-    stopBot(index);
-    return res.status(200).json({ message: `Bot-${index} stopped.` });
-  }
-
-  logger.warn(`[Server] Invalid command '${command}' for Bot-${index}. Bot is already ${bot.instance ? 'online' : 'offline'}.`);
-  res.status(400).json({ error: `Invalid command or bot is already ${command === 'start' ? 'online' : 'offline'}.` });
-});
-
-// Dashboard Route
-app.get('/', (req, res) => {
-  const currentUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-  const htmlResponse = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Bot Dashboard</title>
-      <script src="https://cdn.tailwindcss.com"></script>
-    </head>
-    <body class="bg-gray-900 text-white font-sans min-h-screen flex items-center justify-center p-4">
-      <div class="bg-gray-800 p-8 md:p-12 rounded-2xl shadow-2xl text-center max-w-4xl w-full">
-        <div class="space-y-4">
-          <h1 class="text-4xl md:text-5xl font-extrabold text-blue-400">Bot Dashboard</h1>
-          <p class="text-gray-300 text-xl font-light">
-            Your hub for monitoring and controlling your Minecraft bots.
-          </p>
-        </div>
-
-        <div class="mt-8">
-          <a href="${currentUrl}" class="
-            inline-block
-            px-10 py-4
-            bg-blue-600 hover:bg-blue-700
-            text-white font-bold
-            rounded-full shadow-lg
-            transform transition-transform duration-300 hover:scale-105
-            text-lg
-          ">
-            ${currentUrl}
-          </a>
-          <p class="mt-4 text-gray-400 text-sm">Click the link to keep the server alive.</p>
-        </div>
-
-        <div class="mt-12 pt-8 border-t border-gray-700 text-left">
-          <h2 class="text-3xl font-bold text-blue-300 mb-6">Bot Status & Control</h2>
-          <div id="bot-list" class="grid md:grid-cols-2 gap-6"></div>
-        </div>
-
-        <div class="mt-12 pt-8 border-t border-gray-700 text-left">
-          <h2 class="text-3xl font-bold text-blue-300 mb-6">Core Functions</h2>
-          <ul class="grid md:grid-cols-2 gap-6 text-lg">
-            <li class="p-4 bg-gray-700 rounded-lg shadow-md">
-              <span class="text-white font-bold">Auto Authentication:</span> Automatically logs into servers with stored credentials.
-            </li>
-            <li class="p-4 bg-gray-700 rounded-lg shadow-md">
-              <span class="text-white font-bold">Anti-AFK:</span> Simulates player activity to prevent timeouts and kicks.
-            </li>
-            <li class="p-4 bg-gray-700 rounded-lg shadow-md">
-              <span class="text-white font-bold">Auto Reconnect:</span> Ensures bot rejoins the server after any disconnection.
-            </li>
-            <li class="p-4 bg-gray-700 rounded-lg shadow-md">
-              <span class="text-white font-bold">Chat Responses:</span> Engages with players by sending automated, time-gated replies.
-            </li>
-          </ul>
-        </div>
-
-        <div class="mt-12 pt-8 border-t border-dashed border-gray-600 text-left">
-          <h2 class="text-3xl font-bold text-yellow-400 mb-6">🚧 Coming Soon</h2>
-          <ul class="grid md:grid-cols-2 gap-6 text-lg">
-            <li class="p-4 bg-gray-700 rounded-lg shadow-md">
-              <span class="text-white font-bold">Advanced Features:</span> Smarter AI, inventory management, and more complex tasks.
-            </li>
-            <li class="p-4 bg-gray-700 rounded-lg shadow-md">
-              <span class="text-white font-bold">Web Control Panel:</span> A full browser-based interface to manage all bot functions.
-            </li>
-          </ul>
-        </div>
-      </div>
-
-      <script>
-        const botList = document.getElementById('bot-list');
-
-        const fetchBotStatus = async () => {
-          try {
-            const response = await fetch('/bots');
-            if (!response.ok) throw new Error('Failed to fetch bot status');
-            const bots = await response.json();
-            botList.innerHTML = '';
-
-            bots.forEach(bot => {
-              const statusColor = bot.status === 'online' ? 'bg-green-500' : 'bg-red-500';
-              const buttonColor = bot.status === 'online' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700';
-              const buttonText = bot.status === 'online' ? 'Stop' : 'Start';
-              const command = bot.status === 'online' ? 'stop' : 'start';
-              const username = bot.username || 'Unknown';
-
-              const card = document.createElement('div');
-              card.className = 'p-6 bg-gray-700 rounded-xl shadow-md flex justify-between items-center';
-              card.innerHTML = \`
-                <div>
-                  <div class="text-xl font-semibold text-white">\${username}</div>
-                  <div class="flex items-center mt-1 text-sm text-gray-400">
-                    <span class="w-3 h-3 \${statusColor} rounded-full mr-2"></span>\${bot.status}
-                  </div>
-                </div>
-                <button
-                  onclick="controlBot('\${command}', \${bot.index})"
-                  class="px-4 py-2 \${buttonColor} text-white rounded-md font-semibold transition"
-                >
-                  \${buttonText}
-                </button>
-              \`;
-              botList.appendChild(card);
-            });
-          } catch (error) {
-            console.error('Error fetching bot status:', error);
-          }
-        };
-
-        const controlBot = async (command, index) => {
-          try {
-            const response = await fetch('/control', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ command, index })
-            });
-            if (!response.ok) throw new Error('Failed to control bot');
-            setTimeout(fetchBotStatus, 3000); // Delay for Aternos server startup
-          } catch (error) {
-            console.error('Error controlling bot:', error);
-          }
-        };
-
-        fetchBotStatus();
-        setInterval(fetchBotStatus, 5000);
-      </script>
-    </body>
-    </html>
-  `;
-  res.send(htmlResponse);
-});
-
-// Bot Configuration
-const botsConfig = Array.from({ length: parseInt(process.env.BOT_COUNT) || 0 }).map((_, i) => ({
-  username: process.env[`BOT_${i}_USERNAME`] || `Bot${i}`,
-  password: process.env[`BOT_${i}_PASSWORD`] || '',
-  type: process.env[`BOT_${i}_TYPE`] || 'offline'
-}));
-
-// Bot Creation
-function createBotInstance(botConfig, index) {
-  const serverDetails = {
-    host: process.env.SERVER_IP || 'localhost',
-    port: parseInt(process.env.SERVER_PORT) || 25565,
-    version: process.env.SERVER_VERSION || false
-  };
-
+// --- Persistence ---
+function loadBots() {
+  if (!fs.existsSync(BOTS_FILE)) return [];
   try {
-    const bot = mineflayer.createBot({
-      username: botConfig.username,
-      password: botConfig.password,
-      auth: botConfig.type,
-      ...serverDetails
-    });
-
-    bot.username = botConfig.username;
-    setupBotEventListeners(bot, botConfig, index);
-    return bot;
+    const data = fs.readFileSync(BOTS_FILE, 'utf8');
+    return JSON.parse(data || '[]');
   } catch (err) {
-    logger.error(`[Bot-${index}] Failed to create bot instance: ${err.message}`);
-    return null;
+    addLog("Error reading bots.json");
+    return [];
   }
 }
 
-// Bot Event Listeners
-function setupBotEventListeners(bot, botConfig, index) {
-  const lastReplyTime = new Map();
+function saveAllBots() {
+  const configs = activeBots.map(b => b.config);
+  fs.writeFileSync(BOTS_FILE, JSON.stringify(configs, null, 2));
+}
+
+// --- Bot Management ---
+function createBotInstance(botConfig, index) {
+  addLog(`Connecting ${botConfig.username} to ${botConfig.host}:${botConfig.port}...`);
+
+  const bot = mineflayer.createBot({
+    host: botConfig.host,
+    port: parseInt(botConfig.port),
+    username: botConfig.username,
+    password: botConfig.password,
+    auth: botConfig.type,
+    version: process.env.SERVER_VERSION || false
+  });
 
   bot.once('spawn', () => {
-    logger.info(`[Bot-${index}] ${bot.username} joined the server.`);
-    if (process.env.AUTO_AUTH_ENABLED === 'true') {
-      const password = process.env.AUTO_AUTH_PASSWORD;
-      if (!password) {
-        logger.warn(`[Bot-${index}] AUTO_AUTH_PASSWORD not set for auto-auth.`);
-        return;
-      }
-      setTimeout(() => {
-        bot.chat(`/register ${password} ${password}`);
-        bot.chat(`/login ${password}`);
-        logger.info(`[Bot-${index}] Attempted auto-auth.`);
-      }, 500);
-    }
+    addLog(`SUCCESS: ${bot.username} spawned!`);
+  });
 
-    if (process.env.CHAT_MESSAGES_ENABLED === 'true') {
-      const messages = process.env.CHAT_MESSAGES_LIST?.split(',') || [];
-      if (process.env.CHAT_MESSAGES_REPEAT === 'true') {
-        const delay = parseInt(process.env.CHAT_MESSAGES_REPEAT_DELAY) || 15;
-        let i = 0;
-        bot.chatInterval = setInterval(() => {
-          if (messages[i]) {
-            bot.chat(messages[i]);
-            logger.debug(`[Bot-${index}] Sent scheduled chat message: "${messages[i]}".`);
-          }
-          i = (i + 1) % messages.length;
-        }, delay * 1000);
-      } else {
-        messages.forEach(msg => {
-          bot.chat(msg);
-          logger.debug(`[Bot-${index}] Sent one-time chat message: "${msg}".`);
-        });
-      }
-    }
+  // Capture Chat
+  bot.on('message', (jsonMsg) => {
+    const message = jsonMsg.toString();
+    // Optional: filter out spammy messages here
+    addLog(`[CHAT] ${bot.username}: ${message.substring(0, 50)}...`);
+  });
 
-    if (process.env.ANTI_AFK_ENABLED === 'true') {
-      logger.info(`[Bot-${index}] Anti-AFK is enabled.`);
-      if (process.env.ANTI_AFK_SNEAK === 'true') bot.setControlState('sneak', true);
-      if (process.env.ANTI_AFK_ROTATE === 'true') {
-        bot.rotateInterval = setInterval(() => bot.look(bot.entity.yaw + 1, bot.entity.pitch, true), 100);
-      }
-      if (process.env.ANTI_AFK_JUMP === 'true') {
-        bot.jumpInterval = setInterval(() => {
-          bot.setControlState('jump', true);
-          setTimeout(() => bot.setControlState('jump', false), 500);
-        }, 10000);
+  bot.on('error', (err) => addLog(`ERROR: ${botConfig.username} - ${err.message}`));
+
+  bot.on('end', (reason) => {
+    addLog(`OFFLINE: ${botConfig.username} (${reason})`);
+    const state = activeBots.find(b => b.index === index);
+    if (state) {
+      state.instance = null;
+      if (!state.manuallyStopped && process.env.AUTO_RECONNECT === 'true') {
+        addLog(`Reconnecting ${botConfig.username} in 5s...`);
+        setTimeout(() => startBot(index), 5000);
       }
     }
   });
 
-  bot.on('chat', (username, message) => {
-    if (process.env.CHAT_LOG === 'true' && username !== bot.username) {
-      logger.info(`[Bot-${index}] <${username}> ${message}`);
-    }
-    if (username === bot.username) return;
-
-    const now = Date.now();
-    const last = lastReplyTime.get(username) || 0;
-    const FIVE_MIN = 5 * 60 * 1000;
-    if (now - last >= FIVE_MIN && Math.random() < 0.1) {
-      setTimeout(() => bot.chat(`Hello ${username}`), 500 + Math.random() * 1500);
-      lastReplyTime.set(username, now);
-      logger.debug(`[Bot-${index}] Sent random reply to ${username}.`);
-    }
-  });
-
-  bot.on('end', () => {
-    clearBotIntervals(bot);
-    const botState = activeBots[index];
-    botState.instance = null;
-
-    if (botState.manuallyStopped) {
-      logger.warn(`[Bot-${index}] Manually stopped. Auto-reconnect is disabled.`);
-      botState.manuallyStopped = false;
-    } else {
-      logger.warn(`[Bot-${index}] Disconnected. Attempting to reconnect...`);
-      if (process.env.AUTO_RECONNECT === 'true') {
-        setTimeout(() => startBot(botState.config, index), parseInt(process.env.AUTO_RECONNECT_DELAY) || 5000);
-      }
-    }
-  });
-
-  bot.on('kicked', (reason) => {
-    try {
-      const parsed = JSON.parse(reason);
-      logger.warn(`[Bot-${index}] Kicked: ${parsed.text || parsed.extra?.[0]?.text || 'Unknown reason'}`);
-    } catch {
-      logger.warn(`[Bot-${index}] Kicked: ${reason}`);
-    }
-  });
-
-  bot.on('error', (err) => {
-    logger.error(`[Bot-${index}] An error occurred: ${err.message}`);
-  });
+  return bot;
 }
 
-// Bot Control Functions
-function startBot(botConfig, index) {
-  const botInstance = createBotInstance(botConfig, index);
-  if (botInstance) {
-    activeBots[index].instance = botInstance;
-    logger.info(`[Bot-${index}] Instance created and added to activeBots.`);
-  } else {
-    logger.error(`[Bot-${index}] Failed to create bot instance.`);
-    activeBots[index].instance = null;
+function startBot(index) {
+  const state = activeBots.find(b => b.index === index);
+  if (state && !state.instance) {
+    state.instance = createBotInstance(state.config, index);
+    state.manuallyStopped = false;
   }
 }
 
 function stopBot(index) {
-  const bot = activeBots[index].instance;
-  if (bot) {
-    clearBotIntervals(bot);
-    bot.quit();
-    logger.info(`[Bot-${index}] Quit command sent to bot instance.`);
-  } else {
-    logger.warn(`[Bot-${index}] Stop command ignored, bot is not online.`);
+  const state = activeBots.find(b => b.index === index);
+  if (state && state.instance) {
+    state.manuallyStopped = true;
+    state.instance.quit();
+    state.instance = null;
   }
 }
 
-function clearBotIntervals(bot) {
-  if (bot.chatInterval) clearInterval(bot.chatInterval);
-  if (bot.rotateInterval) clearInterval(bot.rotateInterval);
-  if (bot.jumpInterval) clearInterval(bot.jumpInterval);
-}
-
-// Initialize Bots
-function initializeBots() {
-  const requiredEnvVars = ['BOT_COUNT', 'SERVER_IP', 'SERVER_PORT'];
-  for (const envVar of requiredEnvVars) {
-    if (!process.env[envVar]) {
-      logger.error(`Missing required environment variable: ${envVar}. Bot management server will not start.`);
-      return;
-    }
-  }
-
-  botsConfig.forEach((config, index) => {
-    if (!config.username) {
-      logger.error(`[Config] Bot-${index} has no username specified. Skipping initialization.`);
-      return;
-    }
-    activeBots.push({ config, instance: null, index, manuallyStopped: false });
-    logger.info(`[Config] Initialized bot configuration for Bot-${index} (${config.username}).`);
+// --- API ---
+app.get('/status', (req, res) => {
+  res.json({
+    bots: activeBots.map(b => ({
+      username: b.config.username,
+      host: b.config.host,
+      status: b.instance ? 'online' : 'offline',
+      index: b.index
+    })),
+    logs
   });
+});
 
-  if (activeBots.length === 0) {
-    logger.warn('No bots initialized due to configuration errors. Check your .env file.');
-    return;
-  }
+app.get('/inventory/:index', (req, res) => {
+  // Find bot by index
+  const botState = activeBots.find(b => b.index == req.params.index);
+  const bot = botState?.instance;
 
-  logger.info(`Initialized ${activeBots.length} bot(s).`);
+  if (!bot || !bot.inventory) return res.json({ items: [] });
 
+  const items = bot.inventory.items().map(i => ({
+    name: i.displayName,
+    count: i.count
+  }));
+  res.json({ items });
+});
+
+app.post('/add-bot', (req, res) => {
+  const { host, port, username, password, type } = req.body;
+  const config = {
+    host: host || process.env.SERVER_IP,
+    port: port || process.env.SERVER_PORT || 25565,
+    username, password: password || '', type: type || 'offline'
+  };
+
+  const index = Date.now() + Math.random();
+  activeBots.push({ config, instance: null, index, manuallyStopped: false });
+  saveAllBots();
+  startBot(index);
+  res.json({ success: true });
+});
+
+app.post('/control', (req, res) => {
+  const { command, index } = req.body;
+  command === 'start' ? startBot(index) : stopBot(index);
+  res.json({ success: true });
+});
+
+app.post('/delete-bot', (req, res) => {
+  const { index } = req.body;
+  stopBot(index);
+  activeBots = activeBots.filter(b => b.index !== index);
+  saveAllBots();
+  res.json({ success: true });
+});
+
+// --- UI ---
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Bot Hub Pro</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-slate-900 text-white p-4 font-sans">
+        <div class="max-w-6xl mx-auto grid lg:grid-cols-4 gap-6">
+            
+            <div class="lg:col-span-1 space-y-4">
+                <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                    <h2 class="font-bold text-blue-400 mb-4 uppercase text-sm">Deploy Bot</h2>
+                    <input id="h" placeholder="Server IP" class="w-full bg-slate-900 p-2 mb-2 rounded border border-slate-700 text-sm">
+                    <input id="po" placeholder="Port" class="w-full bg-slate-900 p-2 mb-2 rounded border border-slate-700 text-sm">
+                    <input id="u" placeholder="Username" class="w-full bg-slate-900 p-2 mb-2 rounded border border-slate-700 text-sm">
+                    <select id="t" class="w-full bg-slate-900 p-2 mb-4 rounded border border-slate-700 text-sm">
+                        <option value="offline">Offline/Cracked</option>
+                        <option value="microsoft">Microsoft/Premium</option>
+                    </select>
+                    <button onclick="addBot()" class="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold transition">Launch</button>
+                </div>
+                <div class="bg-black p-4 rounded-xl h-96 overflow-y-auto text-[10px] font-mono text-green-500 border border-slate-700" id="logs"></div>
+            </div>
+
+            <div class="lg:col-span-3 grid md:grid-cols-2 gap-4" id="bot-list"></div>
+        </div>
+
+        <div id="inv-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+            <div class="bg-slate-800 p-6 rounded-2xl max-w-md w-full border border-blue-500 shadow-2xl">
+                <h2 id="inv-name" class="text-xl font-bold mb-4 text-blue-400">Inventory</h2>
+                <div id="inv-grid" class="grid grid-cols-3 gap-2 mb-6 max-h-64 overflow-y-auto"></div>
+                <button onclick="document.getElementById('inv-modal').classList.add('hidden')" class="w-full bg-slate-700 py-2 rounded hover:bg-slate-600 transition">Close</button>
+            </div>
+        </div>
+
+        <script>
+            async function updateUI() {
+                const res = await fetch('/status');
+                const data = await res.json();
+                
+                const logDiv = document.getElementById('logs');
+                logDiv.innerHTML = data.logs.map(l => \`<div>\${l}</div>\`).join('');
+                logDiv.scrollTop = logDiv.scrollHeight;
+
+                document.getElementById('bot-list').innerHTML = data.bots.map(bot => \`
+                    <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-lg relative">
+                        <button onclick="deleteBot(\${bot.index})" class="absolute top-2 right-2 text-slate-600 hover:text-red-500 text-xs">✕</button>
+                        <h3 class="font-bold text-lg">\${bot.username}</h3>
+                        <p class="text-xs text-slate-400 mb-4 truncate">\${bot.host}</p>
+                        <div class="flex gap-2">
+                            <button onclick="openInv(\${bot.index}, '\${bot.username}')" class="flex-1 bg-slate-700 py-2 rounded text-xs hover:bg-slate-600 transition">Items</button>
+                            <button onclick="controlBot('\${bot.status === 'online' ? 'stop' : 'start'}', \${bot.index})" 
+                                class="flex-1 py-2 rounded text-xs font-bold transition \${bot.status === 'online' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}">
+                                \${bot.status === 'online' ? 'STOP' : 'START'}
+                            </button>
+                        </div>
+                    </div>
+                \`).join('');
+            }
+
+            async function openInv(index, name) {
+                const res = await fetch('/inventory/' + index);
+                const data = await res.json();
+                document.getElementById('inv-name').innerText = name + "'s Items";
+                document.getElementById('inv-grid').innerHTML = data.items.length > 0 
+                    ? data.items.map(i => \`
+                        <div class="bg-slate-900 p-2 rounded text-center border border-slate-700 shadow-inner">
+                            <div class="text-[10px] text-blue-300 truncate font-bold">\${i.name}</div>
+                            <div class="font-bold text-lg">x\${i.count}</div>
+                        </div>
+                    \`).join('') 
+                    : '<p class="col-span-3 text-center text-slate-500 py-4">No items found</p>';
+                document.getElementById('inv-modal').classList.remove('hidden');
+            }
+
+            async function addBot() {
+                const body = { 
+                    host: document.getElementById('h').value, 
+                    port: document.getElementById('po').value, 
+                    username: document.getElementById('u').value, 
+                    type: document.getElementById('t').value 
+                };
+                if(!body.username) return alert("Username required!");
+                await fetch('/add-bot', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+                updateUI();
+            }
+
+            async function controlBot(command, index) {
+                await fetch('/control', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ command, index }) });
+                setTimeout(updateUI, 500);
+            }
+
+            async function deleteBot(index) {
+                if(!confirm("Permanently delete this bot?")) return;
+                await fetch('/delete-bot', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ index }) });
+                updateUI();
+            }
+
+            setInterval(updateUI, 3000);
+            updateUI();
+        </script>
+    </body>
+    </html>
+  `);
+});
+
+// --- Init ---
+function init() {
+  const saved = loadBots();
+  // Maps the saved configs back into active status
+  activeBots = saved.map(config => ({
+    config,
+    instance: null,
+    index: Date.now() + Math.random(),
+    manuallyStopped: true // Start offline by default
+  }));
+
+  addLog(`Loaded \${activeBots.length} bots from memory.`);
+
+  // Auto-join if enabled in .env
   if (process.env.AUTO_JOIN_ENABLED === 'true') {
-    logger.info('Auto-join is enabled. Starting all bots...');
-    activeBots.forEach(bot => startBot(bot.config, bot.index));
-  } else {
-    logger.info('Auto-join is disabled. Start bots manually from the web dashboard.');
+    activeBots.forEach((b) => startBot(b.index));
   }
 }
 
-// Start Server
 app.listen(3000, () => {
-  logger.info('Web server is running on port 3000. Access the dashboard at http://localhost:3000');
-  initializeBots();
+  init();
+  console.log("Dashboard: http://localhost:3000");
 });
