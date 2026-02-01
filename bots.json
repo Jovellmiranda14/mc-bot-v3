@@ -1,14 +1,14 @@
 [
   {
     "host": "JovellMiranda.aternos.me",
-    "port": 19038,
+    "port": 25565,
     "username": "Shadow",
     "password": "",
     "type": "offline"
   },
   {
     "host": "JovellMiranda.aternos.me",
-    "port": 19038,
+    "port": 25565,
     "username": "Bot",
     "password": "",
     "type": "offline"
