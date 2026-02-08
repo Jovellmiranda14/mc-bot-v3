@@ -115,10 +115,10 @@ async function startBot(index) {
 
     const isAlive = await checkServerAlive(state.config.host, state.config.port);
 
-    if (!isAlive) {
-      addLog(`ABORT: Server ${state.config.host} is unreachable. Check Aternos Status.`);
-      return;
-    }
+    // if (!isAlive) {
+    //   addLog(`ABORT: Server ${state.config.host} is unreachable. Check Aternos Status.`);
+    //   return;
+    // }
 
     state.instance = createBotInstance(state.config, index);
     state.manuallyStopped = false;
