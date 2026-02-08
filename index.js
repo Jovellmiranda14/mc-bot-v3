@@ -70,13 +70,14 @@ function createBotInstance(botConfig, index) {
     host: botConfig.host,
     port: parseInt(botConfig.port),
     username: botConfig.username,
-    password: botConfig.password,
-    auth: botConfig.type,
-    version: process.env.SERVER_VERSION || false,
-    connectTimeout: 60000, // Vital for Aternos
-    keepAlive: true
+    auth: 'offline',
+    // 1. Manually set your version to stop the VarInt/SlotComponent error
+    version: "1.21.1",
+    // 2. Longer timeouts for Aternos' slow startup
+    connectTimeout: 90000,
+    // 3. This helps skip the "preview" chat packets that often crash bots
+    hideErrors: true
   });
-
   bot.once('spawn', () => {
     addLog(`SUCCESS: ${bot.username} joined the game.`);
   });
