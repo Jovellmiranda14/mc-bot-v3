@@ -3,7 +3,7 @@ const mineflayer = require('mineflayer');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const net = require('net');
+const mc = require('minecraft-protocol');
 
 const app = express();
 const BOTS_FILE = path.join(__dirname, 'bots.json');
@@ -21,28 +21,16 @@ function addLog(msg) {
   console.log(entry);
 }
 
-/**
- * Checks if the Minecraft server port is actually open/reachable
- */
-function checkServerAlive(host, port, timeout = 5000) {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    const timer = setTimeout(() => {
-      socket.destroy();
-      resolve(false);
-    }, timeout);
-
-    socket.connect(port, host, () => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve(true);
-    });
-
-    socket.on('error', () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-  });
+// A TCP check passes for Aternos' proxy even when the server is offline, so use a status ping.
+async function checkServerAlive(host, port, timeout = 8000) {
+  try {
+    const res = await mc.ping({ host, port: parseInt(port), closeTimeout: timeout });
+    const motd = JSON.stringify(res.description || '');
+    addLog(`Status: ${res.version?.name} players ${res.players?.online}/${res.players?.max} ${motd.substring(0, 80)}`);
+    return !/offline|starting|loading|queue/i.test(motd);
+  } catch (err) {
+    return false;
+  }
 }
 
 // --- Persistence ---
@@ -119,10 +107,10 @@ async function startBot(index) {
 
     const isAlive = await checkServerAlive(state.config.host, state.config.port);
 
-    // if (!isAlive) {
-    //   addLog(`ABORT: Server ${state.config.host} is unreachable. Check Aternos Status.`);
-    //   return;
-    // }
+    if (!isAlive) {
+      addLog(`ABORT: Server ${state.config.host} is offline or starting. Check Aternos Status.`);
+      return;
+    }
 
     state.instance = createBotInstance(state.config, index);
     state.manuallyStopped = false;
@@ -210,7 +198,7 @@ app.get('/', (req, res) => {
                 <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl">
                     <h2 class="text-blue-400 font-black uppercase tracking-widest text-xs mb-4">Deploy New Unit</h2>
                     <div class="space-y-3">
-                        <input id="h" placeholder="Server IP (e.g. host.aternos.me)" class="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 focus:border-blue-500 outline-none transition text-sm">
+                        <input id="h" placeholder="Server IP (e.g. Dyn IP)" class="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 focus:border-blue-500 outline-none transition text-sm">
                         <input id="po" placeholder="Port (Default 25565)" class="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 focus:border-blue-500 outline-none transition text-sm">
                         <input id="u" placeholder="Bot Username" class="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 focus:border-blue-500 outline-none transition text-sm">
                         <select id="t" class="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-sm outline-none">
