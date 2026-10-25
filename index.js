@@ -35,7 +35,9 @@ async function checkServerAlive(host, port, timeout = 8000) {
     );
     return !/offline|starting|loading|queue/i.test(motd);
   } catch (err) {
-    return false;
+    // A failed ping (e.g. blocked from Render) is not proof the server is down, so let the join attempt decide.
+    addLog(`Ping failed (${err.code || err.message}), trying to join anyway.`);
+    return true;
   }
 }
 
