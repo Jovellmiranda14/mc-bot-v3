@@ -93,6 +93,10 @@ function createBotInstance(botConfig, index) {
     addLog(`ERROR: ${botConfig.username} - ${err.message}`);
   });
 
+  bot.on('kicked', (reason) => {
+    addLog(`KICKED: ${botConfig.username} - ${typeof reason === 'string' ? reason : JSON.stringify(reason)}`);
+  });
+
   bot.on('end', (reason) => {
     addLog(`OFFLINE: ${botConfig.username} (${reason})`);
     const state = activeBots.find(b => b.index === index);
