@@ -4,7 +4,6 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const mc = require("minecraft-protocol");
-const crypto = require("crypto");
 
 const app = express();
 const BOTS_FILE = path.join(__dirname, "bots.json");
@@ -53,22 +52,10 @@ function loadBots() {
 }
 
 function saveAllBots() {
-  const configs = activeBots.map((b) => {
-    const config = b.config;
-
-    const hash = crypto
-      .createHash("sha256")
-      .update(JSON.stringify(config))
-      .digest("hex");
-
-    return {
-      config,
-      hash,
-    };
-  });
-
+  const configs = activeBots.map((b) => b.config);
   fs.writeFileSync(BOTS_FILE, JSON.stringify(configs, null, 2));
 }
+
 // --- Bot Management ---
 function createBotInstance(botConfig, index) {
   addLog(`Initiating handshake for ${botConfig.username}...`);
