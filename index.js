@@ -1,12 +1,13 @@
-require('dotenv').config();
-const mineflayer = require('mineflayer');
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const mc = require('minecraft-protocol');
+require("dotenv").config();
+const mineflayer = require("mineflayer");
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const mc = require("minecraft-protocol");
+const crypto = require("crypto");
 
 const app = express();
-const BOTS_FILE = path.join(__dirname, 'bots.json');
+const BOTS_FILE = path.join(__dirname, "bots.json");
 
 let activeBots = [];
 let logs = [];
@@ -24,9 +25,15 @@ function addLog(msg) {
 // A TCP check passes for Aternos' proxy even when the server is offline, so use a status ping.
 async function checkServerAlive(host, port, timeout = 8000) {
   try {
-    const res = await mc.ping({ host, port: parseInt(port), closeTimeout: timeout });
-    const motd = JSON.stringify(res.description || '');
-    addLog(`Status: ${res.version?.name} players ${res.players?.online}/${res.players?.max} ${motd.substring(0, 80)}`);
+    const res = await mc.ping({
+      host,
+      port: parseInt(port),
+      closeTimeout: timeout,
+    });
+    const motd = JSON.stringify(res.description || "");
+    addLog(
+      `Status: ${res.version?.name} players ${res.players?.online}/${res.players?.max} ${motd.substring(0, 80)}`,
+    );
     return !/offline|starting|loading|queue/i.test(motd);
   } catch (err) {
     return false;
@@ -37,8 +44,8 @@ async function checkServerAlive(host, port, timeout = 8000) {
 function loadBots() {
   if (!fs.existsSync(BOTS_FILE)) return [];
   try {
-    const data = fs.readFileSync(BOTS_FILE, 'utf8');
-    return JSON.parse(data || '[]');
+    const data = fs.readFileSync(BOTS_FILE, "utf8");
+    return JSON.parse(data || "[]");
   } catch (err) {
     addLog("Error reading bots.json");
     return [];
@@ -46,10 +53,22 @@ function loadBots() {
 }
 
 function saveAllBots() {
-  const configs = activeBots.map(b => b.config);
+  const configs = activeBots.map((b) => {
+    const config = b.config;
+
+    const hash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify(config))
+      .digest("hex");
+
+    return {
+      config,
+      hash,
+    };
+  });
+
   fs.writeFileSync(BOTS_FILE, JSON.stringify(configs, null, 2));
 }
-
 // --- Bot Management ---
 function createBotInstance(botConfig, index) {
   addLog(`Initiating handshake for ${botConfig.username}...`);
@@ -58,39 +77,41 @@ function createBotInstance(botConfig, index) {
     host: botConfig.host,
     port: parseInt(botConfig.port),
     username: botConfig.username,
-    auth: 'offline',
+    auth: "offline",
     // 1. Manually set your version to stop the VarInt/SlotComponent error
     version: "1.21.1",
     // 2. Longer timeouts for Aternos' slow startup
     connectTimeout: 90000,
     // 3. This helps skip the "preview" chat packets that often crash bots
-    hideErrors: true
+    hideErrors: true,
   });
-  bot.once('spawn', () => {
+  bot.once("spawn", () => {
     addLog(`SUCCESS: ${bot.username} joined the game.`);
   });
 
-  bot.on('message', (jsonMsg) => {
+  bot.on("message", (jsonMsg) => {
     const message = jsonMsg.toString();
     if (message.trim().length > 0) {
       addLog(`[CHAT] ${bot.username}: ${message.substring(0, 60)}`);
     }
   });
 
-  bot.on('error', (err) => {
+  bot.on("error", (err) => {
     addLog(`ERROR: ${botConfig.username} - ${err.message}`);
   });
 
-  bot.on('kicked', (reason) => {
-    addLog(`KICKED: ${botConfig.username} - ${typeof reason === 'string' ? reason : JSON.stringify(reason)}`);
+  bot.on("kicked", (reason) => {
+    addLog(
+      `KICKED: ${botConfig.username} - ${typeof reason === "string" ? reason : JSON.stringify(reason)}`,
+    );
   });
 
-  bot.on('end', (reason) => {
+  bot.on("end", (reason) => {
     addLog(`OFFLINE: ${botConfig.username} (${reason})`);
-    const state = activeBots.find(b => b.index === index);
+    const state = activeBots.find((b) => b.index === index);
     if (state) {
       state.instance = null;
-      if (!state.manuallyStopped && process.env.AUTO_RECONNECT === 'true') {
+      if (!state.manuallyStopped && process.env.AUTO_RECONNECT === "true") {
         addLog(`Auto-reconnecting ${botConfig.username} in 10s...`);
         setTimeout(() => startBot(index), 10000);
       }
@@ -101,14 +122,19 @@ function createBotInstance(botConfig, index) {
 }
 
 async function startBot(index) {
-  const state = activeBots.find(b => b.index === index);
+  const state = activeBots.find((b) => b.index === index);
   if (state && !state.instance) {
     addLog(`Pinging ${state.config.host}:${state.config.port}...`);
 
-    const isAlive = await checkServerAlive(state.config.host, state.config.port);
+    const isAlive = await checkServerAlive(
+      state.config.host,
+      state.config.port,
+    );
 
     if (!isAlive) {
-      addLog(`ABORT: Server ${state.config.host} is offline or starting. Check Aternos Status.`);
+      addLog(
+        `ABORT: Server ${state.config.host} is offline or starting. Check Aternos Status.`,
+      );
       return;
     }
 
@@ -118,7 +144,7 @@ async function startBot(index) {
 }
 
 function stopBot(index) {
-  const state = activeBots.find(b => b.index === index);
+  const state = activeBots.find((b) => b.index === index);
   if (state && state.instance) {
     state.manuallyStopped = true;
     state.instance.quit();
@@ -127,33 +153,37 @@ function stopBot(index) {
 }
 
 // --- API Routes ---
-app.get('/status', (req, res) => {
+app.get("/status", (req, res) => {
   res.json({
-    bots: activeBots.map(b => ({
+    bots: activeBots.map((b) => ({
       username: b.config.username,
       host: b.config.host,
       port: b.config.port,
-      status: b.instance ? 'online' : 'offline',
-      index: b.index
+      status: b.instance ? "online" : "offline",
+      index: b.index,
     })),
-    logs
+    logs,
   });
 });
 
-app.get('/inventory/:index', (req, res) => {
-  const botState = activeBots.find(b => b.index == req.params.index);
+app.get("/inventory/:index", (req, res) => {
+  const botState = activeBots.find((b) => b.index == req.params.index);
   const bot = botState?.instance;
   if (!bot || !bot.inventory) return res.json({ items: [] });
-  const items = bot.inventory.items().map(i => ({ name: i.displayName, count: i.count }));
+  const items = bot.inventory
+    .items()
+    .map((i) => ({ name: i.displayName, count: i.count }));
   res.json({ items });
 });
 
-app.post('/add-bot', async (req, res) => {
+app.post("/add-bot", async (req, res) => {
   const { host, port, username, password, type } = req.body;
   const config = {
     host: host || process.env.SERVER_IP,
     port: port || process.env.SERVER_PORT || 25565,
-    username, password: password || '', type: type || 'offline'
+    username,
+    password: password || "",
+    type: type || "offline",
   };
   const index = Date.now() + Math.random();
   activeBots.push({ config, instance: null, index, manuallyStopped: false });
@@ -162,22 +192,22 @@ app.post('/add-bot', async (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/control', async (req, res) => {
+app.post("/control", async (req, res) => {
   const { command, index } = req.body;
-  command === 'start' ? await startBot(index) : stopBot(index);
+  command === "start" ? await startBot(index) : stopBot(index);
   res.json({ success: true });
 });
 
-app.post('/delete-bot', (req, res) => {
+app.post("/delete-bot", (req, res) => {
   const { index } = req.body;
   stopBot(index);
-  activeBots = activeBots.filter(b => b.index !== index);
+  activeBots = activeBots.filter((b) => b.index !== index);
   saveAllBots();
   res.json({ success: true });
 });
 
 // --- UI Rendering ---
-app.get('/', (req, res) => {
+app.get("/", (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html lang="en">
@@ -330,15 +360,15 @@ app.get('/', (req, res) => {
 // --- Initialization ---
 function init() {
   const saved = loadBots();
-  activeBots = saved.map(config => ({
+  activeBots = saved.map((config) => ({
     config,
     instance: null,
     index: Date.now() + Math.random(),
-    manuallyStopped: true
+    manuallyStopped: true,
   }));
   addLog(`System initialized. Loaded ${activeBots.length} bot profiles.`);
 
-  if (process.env.AUTO_JOIN_ENABLED === 'true') {
+  if (process.env.AUTO_JOIN_ENABLED === "true") {
     activeBots.forEach((b) => startBot(b.index));
   }
 }
